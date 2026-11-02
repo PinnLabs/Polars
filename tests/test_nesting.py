@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 
 import pytest
@@ -99,7 +98,7 @@ class Level0:
 
 @dataclass
 class DeepBadAddress:
-    created: datetime
+    signal: complex
 
 
 @dataclass
@@ -114,7 +113,7 @@ class BadInList:
 
 @dataclass
 class BadInOptional:
-    created: datetime | None
+    signal: complex | None
 
 
 @dataclass
@@ -216,20 +215,20 @@ def test_max_depth_does_not_limit_nesting_without_recursion() -> None:
 @pytest.mark.parametrize(
     ("cls", "path"),
     [
-        (DeepBad, "DeepBad.address.created"),
-        (BadInList, "BadInList.items.created"),
+        (DeepBad, "DeepBad.address.signal"),
+        (BadInList, "BadInList.items.signal"),
     ],
 )
 def test_unsupported_type_deep_inside_shows_full_path(cls: type, path: str) -> None:
     with pytest.raises(TypeError) as exc:
         build(cls)
-    assert str(exc.value) == f"cannot generate field '{path}' of type datetime"
+    assert str(exc.value) == f"cannot generate field '{path}' of type complex"
 
 
 def test_unsupported_type_inside_optional_raises_for_every_seed() -> None:
     # Must not depend on whether the seed happens to roll None.
     for seed in range(20):
-        with pytest.raises(TypeError, match="BadInOptional.created"):
+        with pytest.raises(TypeError, match="BadInOptional.signal"):
             build(BadInOptional, seed=seed)
 
 

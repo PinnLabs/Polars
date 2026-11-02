@@ -2,7 +2,6 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import pytest
 
@@ -18,7 +17,7 @@ class User:
 
 @dataclass
 class Event:
-    created: datetime
+    signal: complex
     derived: int = field(init=False, default=-1)
 
 
@@ -69,8 +68,8 @@ def test_override_is_used_exactly_as_given() -> None:
 
 
 def test_override_of_unsupported_type_is_not_generated() -> None:
-    now = datetime.now()
-    assert build(Event, created=now).created is now
+    value = complex(1, 2)
+    assert build(Event, signal=value).signal is value
 
 
 def test_override_leaves_other_fields_unchanged_for_same_seed() -> None:
@@ -82,7 +81,7 @@ def test_override_leaves_other_fields_unchanged_for_same_seed() -> None:
 def test_unknown_override_lists_only_settable_fields() -> None:
     with pytest.raises(TypeError) as exc:
         build(Event, nmae="x")
-    assert str(exc.value) == "build() got unknown field 'nmae' for Event; valid fields: created"
+    assert str(exc.value) == "build() got unknown field 'nmae' for Event; valid fields: signal"
 
 
 def test_override_of_init_false_field_raises_type_error() -> None:

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import pytest
 
@@ -28,7 +27,7 @@ class WithDerivedField:
 
 @dataclass
 class Event:
-    created: datetime
+    signal: complex
 
 
 @dataclass
@@ -66,7 +65,7 @@ def test_init_false_field_is_left_to_the_dataclass() -> None:
 @pytest.mark.parametrize(
     ("cls", "message"),
     [
-        (Event, "cannot generate field 'Event.created' of type datetime"),
+        (Event, "cannot generate field 'Event.signal' of type complex"),
         (Tagged, "cannot generate field 'Tagged.tags' of type dict[str, int]"),
     ],
 )
