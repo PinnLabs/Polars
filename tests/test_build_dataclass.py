@@ -33,7 +33,7 @@ class Event:
 
 @dataclass
 class Tagged:
-    tags: list[int]
+    tags: dict[str, int]
 
 
 class NotADataclass:
@@ -67,7 +67,7 @@ def test_init_false_field_is_left_to_the_dataclass() -> None:
     ("cls", "message"),
     [
         (Event, "cannot generate field 'Event.created' of type datetime"),
-        (Tagged, "cannot generate field 'Tagged.tags' of type list[int]"),
+        (Tagged, "cannot generate field 'Tagged.tags' of type dict[str, int]"),
     ],
 )
 def test_unsupported_type_error_names_class_field_and_type(cls: type, message: str) -> None:
