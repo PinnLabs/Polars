@@ -1,7 +1,13 @@
 [project]
-name = "polars"
-version = "0.1.0"
-description = "Polars is a Python library for automatic object and test-data generation"
+name = "polarfactory"
+version = "0.1.0.dev0"
+description = "Generate Python objects filled with realistic test data."
 readme = "README.md"
-requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
 dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.7.3,<0.8"]
+build-backend = "uv_build"
