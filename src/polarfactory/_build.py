@@ -4,12 +4,18 @@ import string
 import sys
 import types
 from collections.abc import Callable
-from typing import Any, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from enum import Enum
+from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+from uuid import UUID
 
 T = TypeVar("T")
 
 _MAX_DEPTH = 3
 _NONE_PROBABILITY = 0.25
+_DATE_ANCHOR = datetime(2025, 1, 1, tzinfo=timezone.utc)
+_DATE_WINDOW = timedelta(days=5 * 365)
 
 
 def _generate_int(rng: random.Random) -> int:
@@ -24,10 +30,50 @@ def _generate_bool(rng: random.Random) -> bool:
     return rng.random() < 0.5
 
 
+def _generate_float(rng: random.Random) -> float:
+    return round(rng.uniform(0, 10_000), 2)
+
+
+def _generate_bytes(rng: random.Random) -> bytes:
+    return rng.randbytes(8)
+
+
+def _generate_datetime(rng: random.Random) -> datetime:
+    return _DATE_ANCHOR - timedelta(seconds=rng.randrange(int(_DATE_WINDOW.total_seconds())))
+
+
+def _generate_date(rng: random.Random) -> date:
+    return _DATE_ANCHOR.date() - timedelta(days=rng.randrange(_DATE_WINDOW.days))
+
+
+def _generate_time(rng: random.Random) -> time:
+    return time(rng.randrange(24), rng.randrange(60), rng.randrange(60))
+
+
+def _generate_timedelta(rng: random.Random) -> timedelta:
+    return timedelta(seconds=rng.randint(0, 30 * 24 * 60 * 60))
+
+
+def _generate_uuid(rng: random.Random) -> UUID:
+    return UUID(int=rng.getrandbits(128), version=4)
+
+
+def _generate_decimal(rng: random.Random) -> Decimal:
+    return Decimal(f"{rng.randint(0, 1_000_000) / 100:.2f}")
+
+
 _GENERATORS: dict[Any, Callable[[random.Random], Any]] = {
     int: _generate_int,
     str: _generate_str,
     bool: _generate_bool,
+    float: _generate_float,
+    bytes: _generate_bytes,
+    datetime: _generate_datetime,
+    date: _generate_date,
+    time: _generate_time,
+    timedelta: _generate_timedelta,
+    UUID: _generate_uuid,
+    Decimal: _generate_decimal,
 }
 
 
@@ -98,9 +144,18 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
     generator = _GENERATORS.get(tp)
     if generator is not None:
         return generator(random.Random(seed))
+    origin = get_origin(tp)
+    if origin is Literal:
+        return random.Random(seed).choice(get_args(tp))
+    if origin is None and isinstance(tp, type) and issubclass(tp, Enum):
+        members = list(tp)
+        if not members:
+            raise TypeError(
+                f"cannot generate field '{path}' of type {tp.__name__}: enum has no members"
+            )
+        return random.Random(seed).choice(members)
     if _is_dataclass_type(tp):
         return _generate_dataclass(tp, seed, path, ancestors, {})
-    origin = get_origin(tp)
     if tp is list or origin is list:
         return _generate_list(tp, seed, path, ancestors)
     if origin in (Union, types.UnionType):
