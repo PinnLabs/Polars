@@ -30,16 +30,26 @@ def _type_name(tp: Any) -> str:
     return str(tp) if get_origin(tp) else getattr(tp, "__name__", str(tp))
 
 
-def build(cls: type[T]) -> T:
-    """Create an instance of a dataclass with its fields filled with random values."""
+def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T:
     if not (isinstance(cls, type) and dataclasses.is_dataclass(cls)):
         raise TypeError(f"build() expects a dataclass, got {cls!r}")
 
-    rng = random.Random()
+    fields = dataclasses.fields(cls)
+    init_by_name = {field.name: field.init for field in fields}
+    for name in overrides:
+        if name not in init_by_name:
+            valid = ", ".join(field.name for field in fields if field.init)
+            raise TypeError(
+                f"build() got unknown field '{name}' for {cls.__name__}; valid fields: {valid}"
+            )
+        if not init_by_name[name]:
+            raise TypeError(f"build() cannot set field '{cls.__name__}.{name}': it has init=False")
+
+    base_seed = random.Random().getrandbits(64) if seed is None else seed
     hints = get_type_hints(cls)
-    values: dict[str, Any] = {}
-    for field in dataclasses.fields(cls):
-        if not field.init:
+    values: dict[str, Any] = dict(overrides)
+    for field in fields:
+        if not field.init or field.name in overrides:
             continue
         tp = hints[field.name]
         generator = _GENERATORS.get(tp)
@@ -47,5 +57,5 @@ def build(cls: type[T]) -> T:
             raise TypeError(
                 f"cannot generate field '{cls.__name__}.{field.name}' of type {_type_name(tp)}"
             )
-        values[field.name] = generator(rng)
+        values[field.name] = generator(random.Random(f"{base_seed}:{field.name}"))
     return cls(**values)
