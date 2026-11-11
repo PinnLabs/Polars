@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 from uuid import UUID
 
+from polarfactory._names import NAME_GENERATORS
 from polarfactory.errors import GenerationError, PolarFactoryError
 
 T = TypeVar("T")
@@ -265,6 +266,9 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
     if isinstance(tp, str):
         tp = _resolve_forward_ref(tp, ancestors[-1])
     generator = _GENERATORS.get(tp)
+    if tp is str and generator is _generate_str:
+        # Only while str uses the default generator, so register(str, ...) still wins.
+        generator = NAME_GENERATORS.get(path.rsplit(".", 1)[-1], generator)
     if generator is not None:
         return generator(random.Random(seed))
     origin = get_origin(tp)
