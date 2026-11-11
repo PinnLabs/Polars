@@ -4,6 +4,7 @@ from typing import Optional
 import pytest
 
 from polarfactory import build
+from polarfactory.errors import GenerationError
 
 SEEDS = range(200)
 
@@ -200,7 +201,8 @@ def test_required_self_reference_raises_with_path() -> None:
         build(Loop)
     assert str(exc.value) == (
         "cannot generate field 'Loop.next.next.next.next' of type Loop: "
-        "required self-reference exceeds max depth 3"
+        "required self-reference exceeds max depth 3. "
+        "Make it Optional or a list, or pass it as an override: build(Loop, next=...)"
     )
 
 
@@ -220,9 +222,13 @@ def test_max_depth_does_not_limit_nesting_without_recursion() -> None:
     ],
 )
 def test_unsupported_type_deep_inside_shows_full_path(cls: type, path: str) -> None:
-    with pytest.raises(TypeError) as exc:
+    with pytest.raises(GenerationError) as exc:
         build(cls)
-    assert str(exc.value) == f"cannot generate field '{path}' of type complex"
+    root, field = path.split(".")[:2]
+    assert str(exc.value) == (
+        f"cannot generate field '{path}' of type complex. "
+        f"Pass it as an override: build({root}, {field}=...)"
+    )
 
 
 def test_unsupported_type_inside_optional_raises_for_every_seed() -> None:
@@ -235,7 +241,10 @@ def test_unsupported_type_inside_optional_raises_for_every_seed() -> None:
 def test_bare_list_raises_type_error_asking_for_item_type() -> None:
     with pytest.raises(TypeError) as exc:
         build(BareList)
-    assert str(exc.value) == "cannot generate field 'BareList.items' of type list: use list[X]"
+    assert str(exc.value) == (
+        "cannot generate field 'BareList.items' of type list. "
+        "Use list[X], or pass it as an override: build(BareList, items=...)"
+    )
 
 
 def test_other_unions_stay_unsupported() -> None:

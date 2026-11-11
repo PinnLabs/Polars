@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from polarfactory import build
+from polarfactory.errors import GenerationError, PolarFactoryError
 
 
 @dataclass
@@ -65,17 +66,28 @@ def test_init_false_field_is_left_to_the_dataclass() -> None:
 @pytest.mark.parametrize(
     ("cls", "message"),
     [
-        (Event, "cannot generate field 'Event.signal' of type complex"),
-        (Tagged, "cannot generate field 'Tagged.tags' of type dict[str, int]"),
+        (
+            Event,
+            "cannot generate field 'Event.signal' of type complex. "
+            "Pass it as an override: build(Event, signal=...)",
+        ),
+        (
+            Tagged,
+            "cannot generate field 'Tagged.tags' of type dict[str, int]. "
+            "Pass it as an override: build(Tagged, tags=...)",
+        ),
     ],
 )
 def test_unsupported_type_error_names_class_field_and_type(cls: type, message: str) -> None:
-    with pytest.raises(TypeError) as exc:
+    with pytest.raises(GenerationError) as exc:
         build(cls)
     assert str(exc.value) == message
 
 
 @pytest.mark.parametrize("value", [NotADataclass, User(1, "a", True)])
 def test_non_dataclass_input_raises_type_error(value: object) -> None:
-    with pytest.raises(TypeError):
+    with pytest.raises(PolarFactoryError) as exc:
         build(value)  # type: ignore[arg-type]
+    assert str(exc.value) == (
+        f"build() expects a dataclass or a class with __init__, got {value!r}"
+    )
