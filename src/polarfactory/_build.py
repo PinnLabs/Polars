@@ -11,6 +11,14 @@ from enum import Enum
 from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 from uuid import UUID
 
+from polarfactory._constraints import (
+    Constraints,
+    UnsupportedConstraint,
+    describe,
+    fit_length,
+    generate_from_pattern,
+    generate_number,
+)
 from polarfactory._names import NAME_GENERATORS
 from polarfactory.errors import GenerationError, PolarFactoryError
 
@@ -121,6 +129,7 @@ class _FieldSpec:
     name: str
     type: Any
     init: bool = True
+    constraints: Constraints | None = None
 
 
 def _is_dataclass_type(tp: Any) -> bool:
@@ -134,7 +143,19 @@ def _is_buildable(tp: Any) -> bool:
     )
 
 
+def _pydantic_support(tp: Any) -> types.ModuleType | None:
+    # Never import pydantic ourselves: a pydantic model can only exist once the user has.
+    if "pydantic" not in sys.modules:
+        return None
+    from polarfactory import _pydantic
+
+    return _pydantic if _pydantic.is_model(tp) else None
+
+
 def _field_specs(cls: type[Any]) -> list[_FieldSpec]:
+    pydantic_support = _pydantic_support(cls)
+    if pydantic_support is not None:
+        return cast(list[_FieldSpec], pydantic_support.field_specs(cls))
     if _is_dataclass_type(cls):
         hints = _type_hints(cls, cls)
         specs = [
@@ -173,10 +194,15 @@ _COLLECTION_HINTS: dict[Any, str] = {
 
 
 def _generate_items(
-    tp: Any, seed: str, path: str, ancestors: tuple[type, ...], suffix: str = ""
+    tp: Any,
+    seed: str,
+    path: str,
+    ancestors: tuple[type, ...],
+    sizes: tuple[int, int],
+    suffix: str = "",
 ) -> list[Any]:
     # The length depends only on seed, so dict keys and values get the same length.
-    length = random.Random(seed).randint(1, 3)
+    length = random.Random(seed).randint(*sizes)
     try:
         return [_generate(tp, f"{seed}:{i}{suffix}", path, ancestors) for i in range(length)]
     except _DepthExceededError:
@@ -184,7 +210,12 @@ def _generate_items(
 
 
 def _generate_collection(
-    kind: type, tp: Any, seed: str, path: str, ancestors: tuple[type, ...]
+    kind: type,
+    tp: Any,
+    seed: str,
+    path: str,
+    ancestors: tuple[type, ...],
+    constraints: Constraints | None,
 ) -> Any:
     args = get_args(tp)
     if not args:
@@ -194,12 +225,15 @@ def _generate_collection(
         )
     if kind is tuple and args[-1] is not Ellipsis:
         return tuple(_generate(arg, f"{seed}:{i}", path, ancestors) for i, arg in enumerate(args))
-    items = _generate_items(args[0], seed, path, ancestors)
+    sizes = constraints.size_range(1, 3) if constraints else (1, 3)
+    items = _generate_items(args[0], seed, path, ancestors, sizes)
     if kind is list:
         return items
     if kind is tuple:
         return tuple(items)
-    values = _generate_items(args[1], seed, path, ancestors, ":value") if kind is dict else []
+    values = (
+        _generate_items(args[1], seed, path, ancestors, sizes, ":value") if kind is dict else []
+    )
     try:
         return dict(zip(items, values, strict=False)) if kind is dict else set(items)
     except TypeError as exc:
@@ -210,13 +244,19 @@ def _generate_collection(
         ) from exc
 
 
-def _generate_union(members: list[Any], seed: str, path: str, ancestors: tuple[type, ...]) -> Any:
+def _generate_union(
+    members: list[Any],
+    seed: str,
+    path: str,
+    ancestors: tuple[type, ...],
+    constraints: Constraints | None,
+) -> Any:
     # Generate every member so an unsupported one fails no matter which member the seed picks.
     values = []
     depth_errors = []
     for i, member in enumerate(members):
         try:
-            values.append(_generate(member, f"{seed}:{i}", path, ancestors))
+            values.append(_generate(member, f"{seed}:{i}", path, ancestors, constraints))
         except _DepthExceededError as exc:
             depth_errors.append(exc)
     if not values:
@@ -224,9 +264,15 @@ def _generate_union(members: list[Any], seed: str, path: str, ancestors: tuple[t
     return random.Random(seed).choice(values)
 
 
-def _generate_optional(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any:
+def _generate_optional(
+    tp: Any,
+    seed: str,
+    path: str,
+    ancestors: tuple[type, ...],
+    constraints: Constraints | None,
+) -> Any:
     try:
-        value = _generate(tp, f"{seed}:value", path, ancestors)
+        value = _generate(tp, f"{seed}:value", path, ancestors, constraints)
     except _DepthExceededError:
         return None
     return None if random.Random(seed).random() < _NONE_PROBABILITY else value
@@ -257,12 +303,44 @@ def _generate_object(
                     f"Add one, or pass it as an override: {_override_hint(field_path)}"
                 )
             values[field.name] = _generate(
-                field.type, f"{seed}:{field.name}", field_path, ancestors
+                field.type, f"{seed}:{field.name}", field_path, ancestors, field.constraints
             )
+    pydantic_support = _pydantic_support(cls)
+    if pydantic_support is not None:
+        return pydantic_support.construct(cls, values, path)
     return cls(**values)
 
 
-def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any:
+def _generate_constrained(
+    tp: Any,
+    generator: Callable[[random.Random], Any],
+    constraints: Constraints,
+    seed: str,
+    path: str,
+) -> Any:
+    rng = random.Random(seed)
+    try:
+        if tp in (int, float, Decimal):
+            return generate_number(tp, constraints, rng)
+        if tp is str and constraints.pattern is not None:
+            return generate_from_pattern(constraints.pattern, rng)
+        if tp is str:
+            return fit_length(generator(rng), constraints, random.Random(f"{seed}:length"))
+    except UnsupportedConstraint as exc:
+        raise GenerationError(
+            f"cannot generate field '{path}' with {describe(constraints)}: {exc}. "
+            f"Pass it as an override: {_override_hint(path)}"
+        ) from exc
+    return generator(rng)
+
+
+def _generate(
+    tp: Any,
+    seed: str,
+    path: str,
+    ancestors: tuple[type, ...],
+    constraints: Constraints | None = None,
+) -> Any:
     if isinstance(tp, str):
         tp = _resolve_forward_ref(tp, ancestors[-1])
     generator = _GENERATORS.get(tp)
@@ -270,6 +348,9 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
         # Only while str uses the default generator, so register(str, ...) still wins.
         generator = NAME_GENERATORS.get(path.rsplit(".", 1)[-1], generator)
     if generator is not None:
+        # Constraints only steer built-in generators; a registered one is used as is.
+        if constraints is not None and _GENERATORS.get(tp) is _DEFAULT_GENERATORS.get(tp):
+            return _generate_constrained(tp, generator, constraints, seed, path)
         return generator(random.Random(seed))
     origin = get_origin(tp)
     if origin is Literal:
@@ -286,14 +367,14 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
         return _generate_object(tp, seed, path, ancestors, {})
     kind = origin or tp
     if kind in _COLLECTION_HINTS:
-        return _generate_collection(kind, tp, seed, path, ancestors)
+        return _generate_collection(kind, tp, seed, path, ancestors, constraints)
     if origin in (Union, types.UnionType):
         args = get_args(tp)
         inner = [arg for arg in args if arg is not type(None)]
         if len(inner) < len(args):
             core = inner[0] if len(inner) == 1 else Union[tuple(inner)]  # noqa: UP007 - built at runtime
-            return _generate_optional(core, seed, path, ancestors)
-        return _generate_union(inner, seed, path, ancestors)
+            return _generate_optional(core, seed, path, ancestors, constraints)
+        return _generate_union(inner, seed, path, ancestors, constraints)
     raise GenerationError(
         f"cannot generate field '{path}' of type {_type_name(tp)}. "
         f"Pass it as an override: {_override_hint(path)}"
