@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any, Literal, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 from uuid import UUID
 
+from polarfactory.errors import GenerationError, PolarFactoryError
+
 T = TypeVar("T")
 
 _MAX_DEPTH = 3
@@ -82,8 +84,23 @@ def _type_name(tp: Any) -> str:
     return str(tp) if get_origin(tp) else getattr(tp, "__name__", str(tp))
 
 
-class _DepthExceededError(TypeError):
+class _DepthExceededError(GenerationError):
     pass
+
+
+def _override_hint(path: str) -> str:
+    root, field = path.split(".")[:2]
+    return f"build({root}, {field}=...)"
+
+
+def _type_hints(obj: Any, cls: type[Any], namespace: dict[str, Any] | None = None) -> Any:
+    try:
+        return get_type_hints(obj, namespace)
+    except NameError as exc:
+        raise GenerationError(
+            f"cannot resolve type hints of {cls.__name__}: {exc}. "
+            f"Define or import it in module '{cls.__module__}'"
+        ) from exc
 
 
 @dataclasses.dataclass(frozen=True)
@@ -104,39 +121,43 @@ def _is_buildable(tp: Any) -> bool:
     )
 
 
-def _field_specs(cls: type[Any], path: str) -> list[_FieldSpec]:
+def _field_specs(cls: type[Any]) -> list[_FieldSpec]:
     if _is_dataclass_type(cls):
-        hints = get_type_hints(cls)
-        return [
+        hints = _type_hints(cls, cls)
+        specs = [
             _FieldSpec(field.name, hints[field.name], field.init)
             for field in dataclasses.fields(cls)
         ]
-    hints = get_type_hints(cls.__init__)
+        # InitVar pseudo-fields are __init__ arguments but not part of dataclasses.fields().
+        return specs + [
+            _FieldSpec(name, hint.type)
+            for name, hint in hints.items()
+            if isinstance(hint, dataclasses.InitVar)
+        ]
+    hints = _type_hints(cls.__init__, cls)
     params = list(inspect.signature(cls.__init__).parameters.values())[1:]  # drop self
-    specs = []
-    for param in params:
-        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-            continue
-        if param.name not in hints:
-            raise TypeError(
-                f"cannot generate field '{path}.{param.name}': "
-                f"parameter '{param.name}' of {cls.__name__}.__init__ has no type hint"
-            )
-        specs.append(_FieldSpec(param.name, hints[param.name]))
-    return specs
+    return [
+        # A missing hint is stored as Parameter.empty so an override can still supply the value.
+        _FieldSpec(param.name, hints.get(param.name, param.empty))
+        for param in params
+        if param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD)
+    ]
 
 
 def _resolve_forward_ref(tp: str, owner: type) -> Any:
     # shortcut: Python 3.10 leaves list["X"] unresolved, and this only looks in owner's module, so
     # a field inherited from another module raises NameError. Drop this when 3.10 support ends.
     holder = types.SimpleNamespace(__annotations__={"value": tp})
-    return get_type_hints(holder, vars(sys.modules[owner.__module__]))["value"]
+    return _type_hints(holder, owner, vars(sys.modules[owner.__module__]))["value"]
 
 
 def _generate_list(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> list[Any]:
     args = get_args(tp)
     if not args:
-        raise TypeError(f"cannot generate field '{path}' of type list: use list[X]")
+        raise GenerationError(
+            f"cannot generate field '{path}' of type list. "
+            f"Use list[X], or pass it as an override: {_override_hint(path)}"
+        )
     length = random.Random(seed).randint(1, 3)
     try:
         return [_generate(args[0], f"{seed}:{i}", path, ancestors) for i in range(length)]
@@ -163,13 +184,21 @@ def _generate_object(
     if len(ancestors) - len(set(ancestors)) > _MAX_DEPTH:
         raise _DepthExceededError(
             f"cannot generate field '{path}' of type {cls.__name__}: "
-            f"required self-reference exceeds max depth {_MAX_DEPTH}"
+            f"required self-reference exceeds max depth {_MAX_DEPTH}. "
+            f"Make it Optional or a list, or pass it as an override: {_override_hint(path)}"
         )
     values: dict[str, Any] = dict(overrides)
-    for field in _field_specs(cls, path):
+    for field in _field_specs(cls):
         if field.init and field.name not in overrides:
+            field_path = f"{path}.{field.name}"
+            if field.type is inspect.Parameter.empty:
+                raise GenerationError(
+                    f"cannot generate field '{field_path}': parameter '{field.name}' of "
+                    f"{cls.__name__}.__init__ has no type hint. "
+                    f"Add one, or pass it as an override: {_override_hint(field_path)}"
+                )
             values[field.name] = _generate(
-                field.type, f"{seed}:{field.name}", f"{path}.{field.name}", ancestors
+                field.type, f"{seed}:{field.name}", field_path, ancestors
             )
     return cls(**values)
 
@@ -186,8 +215,9 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
     if origin is None and isinstance(tp, type) and issubclass(tp, Enum):
         members = list(tp)
         if not members:
-            raise TypeError(
-                f"cannot generate field '{path}' of type {tp.__name__}: enum has no members"
+            raise GenerationError(
+                f"cannot generate field '{path}' of type {tp.__name__}: enum has no members. "
+                f"Add a member, or pass it as an override: {_override_hint(path)}"
             )
         return random.Random(seed).choice(members)
     if _is_buildable(tp):
@@ -198,23 +228,31 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
         inner = [arg for arg in get_args(tp) if arg is not type(None)]
         if len(inner) == 1:
             return _generate_optional(inner[0], seed, path, ancestors)
-    raise TypeError(f"cannot generate field '{path}' of type {_type_name(tp)}")
+    raise GenerationError(
+        f"cannot generate field '{path}' of type {_type_name(tp)}. "
+        f"Pass it as an override: {_override_hint(path)}"
+    )
 
 
 def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T:
     if not _is_buildable(cls):
-        raise TypeError(f"build() expects a dataclass or a class with __init__, got {cls!r}")
+        raise PolarFactoryError(
+            f"build() expects a dataclass or a class with __init__, got {cls!r}"
+        )
 
-    fields = _field_specs(cls, cls.__name__)
+    fields = _field_specs(cls)
     init_by_name = {field.name: field.init for field in fields}
     for name in overrides:
         if name not in init_by_name:
             valid = ", ".join(field.name for field in fields if field.init)
-            raise TypeError(
+            raise PolarFactoryError(
                 f"build() got unknown field '{name}' for {cls.__name__}; valid fields: {valid}"
             )
         if not init_by_name[name]:
-            raise TypeError(f"build() cannot set field '{cls.__name__}.{name}': it has init=False")
+            raise PolarFactoryError(
+                f"build() cannot set field '{cls.__name__}.{name}': it has init=False. "
+                "Set it on the built object instead"
+            )
 
     base_seed = random.Random().getrandbits(64) if seed is None else seed
     return cast(T, _generate_object(cls, str(base_seed), cls.__name__, (), overrides))
