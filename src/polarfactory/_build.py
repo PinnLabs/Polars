@@ -65,7 +65,7 @@ def _generate_decimal(rng: random.Random) -> Decimal:
     return Decimal(f"{rng.randint(0, 1_000_000) / 100:.2f}")
 
 
-_GENERATORS: dict[Any, Callable[[random.Random], Any]] = {
+_DEFAULT_GENERATORS: dict[Any, Callable[[random.Random], Any]] = {
     int: _generate_int,
     str: _generate_str,
     bool: _generate_bool,
@@ -78,6 +78,18 @@ _GENERATORS: dict[Any, Callable[[random.Random], Any]] = {
     UUID: _generate_uuid,
     Decimal: _generate_decimal,
 }
+_GENERATORS = dict(_DEFAULT_GENERATORS)
+
+
+def register(tp: type[T], fn: Callable[[random.Random], T]) -> None:
+    if not callable(fn):
+        raise PolarFactoryError(f"register() expects a callable for {tp!r}, got {fn!r}")
+    _GENERATORS[tp] = fn
+
+
+def reset_registry() -> None:
+    _GENERATORS.clear()
+    _GENERATORS.update(_DEFAULT_GENERATORS)
 
 
 def _type_name(tp: Any) -> str:
@@ -284,10 +296,10 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
     )
 
 
-def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T:
+def _check_build_args(func: str, cls: type[Any], overrides: dict[str, object]) -> None:
     if not _is_buildable(cls):
         raise PolarFactoryError(
-            f"build() expects a dataclass or a class with __init__, got {cls!r}"
+            f"{func}() expects a dataclass or a class with __init__, got {cls!r}"
         )
 
     fields = _field_specs(cls)
@@ -296,13 +308,31 @@ def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T
         if name not in init_by_name:
             valid = ", ".join(field.name for field in fields if field.init)
             raise PolarFactoryError(
-                f"build() got unknown field '{name}' for {cls.__name__}; valid fields: {valid}"
+                f"{func}() got unknown field '{name}' for {cls.__name__}; valid fields: {valid}"
             )
         if not init_by_name[name]:
             raise PolarFactoryError(
-                f"build() cannot set field '{cls.__name__}.{name}': it has init=False. "
+                f"{func}() cannot set field '{cls.__name__}.{name}': it has init=False. "
                 "Set it on the built object instead"
             )
 
-    base_seed = random.Random().getrandbits(64) if seed is None else seed
-    return cast(T, _generate_object(cls, str(base_seed), cls.__name__, (), overrides))
+
+def _base_seed(seed: int | None) -> int:
+    return random.Random().getrandbits(64) if seed is None else seed
+
+
+def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T:
+    _check_build_args("build", cls, overrides)
+    root_seed = str(_base_seed(seed))
+    return cast(T, _generate_object(cls, root_seed, cls.__name__, (), overrides))
+
+
+def build_many(cls: type[T], n: int, /, *, seed: int | None = None, **overrides: object) -> list[T]:
+    _check_build_args("build_many", cls, overrides)
+    if n < 0:
+        raise PolarFactoryError(f"build_many() expects n >= 0, got {n}")
+    base_seed = _base_seed(seed)
+    return [
+        cast(T, _generate_object(cls, f"{base_seed}:{i}", cls.__name__, (), overrides))
+        for i in range(n)
+    ]
