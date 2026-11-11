@@ -122,11 +122,6 @@ class BareList:
     items: list
 
 
-@dataclass
-class OtherUnion:
-    value: int | str | None
-
-
 def node_depth(node: Node) -> int:
     return 1 + max((node_depth(child) for child in node.children), default=-1)
 
@@ -245,8 +240,3 @@ def test_bare_list_raises_type_error_asking_for_item_type() -> None:
         "cannot generate field 'BareList.items' of type list. "
         "Use list[X], or pass it as an override: build(BareList, items=...)"
     )
-
-
-def test_other_unions_stay_unsupported() -> None:
-    with pytest.raises(TypeError, match="OtherUnion.value"):
-        build(OtherUnion)

@@ -33,7 +33,7 @@ class Event:
 
 @dataclass
 class Tagged:
-    tags: dict[str, int]
+    tags: frozenset[int]
 
 
 class NotADataclass:
@@ -73,7 +73,7 @@ def test_init_false_field_is_left_to_the_dataclass() -> None:
         ),
         (
             Tagged,
-            "cannot generate field 'Tagged.tags' of type dict[str, int]. "
+            "cannot generate field 'Tagged.tags' of type frozenset[int]. "
             "Pass it as an override: build(Tagged, tags=...)",
         ),
     ],
