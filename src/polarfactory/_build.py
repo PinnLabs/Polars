@@ -107,7 +107,10 @@ def _is_buildable(tp: Any) -> bool:
 def _field_specs(cls: type[Any], path: str) -> list[_FieldSpec]:
     if _is_dataclass_type(cls):
         hints = get_type_hints(cls)
-        return [_FieldSpec(f.name, hints[f.name], f.init) for f in dataclasses.fields(cls)]
+        return [
+            _FieldSpec(field.name, hints[field.name], field.init)
+            for field in dataclasses.fields(cls)
+        ]
     hints = get_type_hints(cls.__init__)
     params = list(inspect.signature(cls.__init__).parameters.values())[1:]  # drop self
     specs = []
