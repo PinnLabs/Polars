@@ -17,9 +17,6 @@ class Person:
         self.address = address
         self.backup = backup
 
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Person) and vars(self) == vars(other)
-
 
 class Team:
     def __init__(self, lead: Person, members: list[Person], *args: Any, **kwargs: Any) -> None:
@@ -49,8 +46,8 @@ def test_plain_class_with_nested_dataclass_builds_deterministically() -> None:
     person = build(Person, seed=3)
     assert type(person.name) is str
     assert type(person.address) is Address and type(person.address.city) is str
-    assert person == build(Person, seed=3)
-    assert person != build(Person, seed=4)
+    assert vars(person) == vars(build(Person, seed=3))
+    assert vars(person) != vars(build(Person, seed=4))
 
 
 def test_plain_classes_nest_inside_each_other_and_skip_varargs() -> None:
