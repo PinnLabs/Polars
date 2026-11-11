@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 
 from polarfactory import build
+from polarfactory.errors import GenerationError
 
 SEEDS = range(50)
 OPTIONS = Literal["a", "b", 1]
@@ -175,8 +176,9 @@ def test_same_seed_gives_same_result_in_separate_processes() -> None:
 
 
 def test_empty_enum_raises_type_error_with_path() -> None:
-    with pytest.raises(TypeError) as exc:
+    with pytest.raises(GenerationError) as exc:
         build(EmptyParent)
     assert str(exc.value) == (
-        "cannot generate field 'EmptyParent.inner.kind' of type Empty: enum has no members"
+        "cannot generate field 'EmptyParent.inner.kind' of type Empty: enum has no members. "
+        "Add a member, or pass it as an override: build(EmptyParent, inner=...)"
     )

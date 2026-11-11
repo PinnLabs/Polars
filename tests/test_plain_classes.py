@@ -4,6 +4,7 @@ from typing import Any, Optional
 import pytest
 
 from polarfactory import build
+from polarfactory.errors import GenerationError
 
 
 @dataclass
@@ -68,12 +69,25 @@ def test_overrides_and_unknown_field_error() -> None:
     )
 
 
-def test_missing_type_hint_raises_naming_the_parameter() -> None:
-    message = "parameter 'label' of Untyped.__init__ has no type hint"
-    with pytest.raises(TypeError, match=message):
-        build(Untyped)
-    with pytest.raises(TypeError, match=f"'HoldsUntyped.inner.label': {message}"):
-        build(HoldsUntyped)
+@pytest.mark.parametrize(
+    ("cls", "path", "hint"),
+    [
+        (Untyped, "Untyped.label", "build(Untyped, label=...)"),
+        (HoldsUntyped, "HoldsUntyped.inner.label", "build(HoldsUntyped, inner=...)"),
+    ],
+)
+def test_missing_type_hint_raises_naming_the_parameter(cls: type, path: str, hint: str) -> None:
+    with pytest.raises(GenerationError) as exc:
+        build(cls)
+    assert str(exc.value) == (
+        f"cannot generate field '{path}': parameter 'label' of Untyped.__init__ has no type "
+        f"hint. Add one, or pass it as an override: {hint}"
+    )
+
+
+def test_missing_type_hint_can_be_overridden() -> None:
+    built = build(Untyped, seed=1, label="x")
+    assert type(built.id) is int and built.label == "x"
 
 
 def test_self_reference_stops_at_max_depth() -> None:

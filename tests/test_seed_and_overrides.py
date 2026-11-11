@@ -87,4 +87,7 @@ def test_unknown_override_lists_only_settable_fields() -> None:
 def test_override_of_init_false_field_raises_type_error() -> None:
     with pytest.raises(TypeError) as exc:
         build(Event, derived=1)
-    assert str(exc.value) == "build() cannot set field 'Event.derived': it has init=False"
+    assert str(exc.value) == (
+        "build() cannot set field 'Event.derived': it has init=False. "
+        "Set it on the built object instead"
+    )
