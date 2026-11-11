@@ -8,6 +8,11 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+pydantic = [
+    "pydantic>=2.11",
+]
+
 [build-system]
 requires = ["uv_build>=0.7.3,<0.14"]
 build-backend = "uv_build"
@@ -25,8 +30,13 @@ strict = true
 testpaths = ["tests"]
 
 [dependency-groups]
-dev = [
-    "mypy>=2.4.1",
+# CI installs only "test" to prove the core works without pydantic.
+test = [
     "pytest>=9.2.0",
+]
+dev = [
+    { include-group = "test" },
+    "mypy>=2.4.1",
+    "pydantic>=2.11",
     "ruff>=0.17.3",
 ]
