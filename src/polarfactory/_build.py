@@ -151,18 +151,64 @@ def _resolve_forward_ref(tp: str, owner: type) -> Any:
     return _type_hints(holder, owner, vars(sys.modules[owner.__module__]))["value"]
 
 
-def _generate_list(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> list[Any]:
+_COLLECTION_HINTS: dict[Any, str] = {
+    list: "list[X]",
+    set: "set[X]",
+    dict: "dict[K, V]",
+    tuple: "tuple[X, Y] or tuple[X, ...]",
+}
+
+
+def _generate_items(
+    tp: Any, seed: str, path: str, ancestors: tuple[type, ...], suffix: str = ""
+) -> list[Any]:
+    # The length depends only on seed, so dict keys and values get the same length.
+    length = random.Random(seed).randint(1, 3)
+    try:
+        return [_generate(tp, f"{seed}:{i}{suffix}", path, ancestors) for i in range(length)]
+    except _DepthExceededError:
+        return []
+
+
+def _generate_collection(
+    kind: type, tp: Any, seed: str, path: str, ancestors: tuple[type, ...]
+) -> Any:
     args = get_args(tp)
     if not args:
         raise GenerationError(
-            f"cannot generate field '{path}' of type list. "
-            f"Use list[X], or pass it as an override: {_override_hint(path)}"
+            f"cannot generate field '{path}' of type {kind.__name__}. "
+            f"Use {_COLLECTION_HINTS[kind]}, or pass it as an override: {_override_hint(path)}"
         )
-    length = random.Random(seed).randint(1, 3)
+    if kind is tuple and args[-1] is not Ellipsis:
+        return tuple(_generate(arg, f"{seed}:{i}", path, ancestors) for i, arg in enumerate(args))
+    items = _generate_items(args[0], seed, path, ancestors)
+    if kind is list:
+        return items
+    if kind is tuple:
+        return tuple(items)
+    values = _generate_items(args[1], seed, path, ancestors, ":value") if kind is dict else []
     try:
-        return [_generate(args[0], f"{seed}:{i}", path, ancestors) for i in range(length)]
-    except _DepthExceededError:
-        return []
+        return dict(zip(items, values, strict=False)) if kind is dict else set(items)
+    except TypeError as exc:
+        what = "keys" if kind is dict else "items"
+        raise GenerationError(
+            f"cannot generate field '{path}' of type {_type_name(tp)}: {what} are not hashable. "
+            f"Use a hashable type, or pass it as an override: {_override_hint(path)}"
+        ) from exc
+
+
+def _generate_union(members: list[Any], seed: str, path: str, ancestors: tuple[type, ...]) -> Any:
+    # Generate every member so an unsupported one fails no matter which member the seed picks.
+    values = []
+    depth_errors = []
+    for i, member in enumerate(members):
+        try:
+            values.append(_generate(member, f"{seed}:{i}", path, ancestors))
+        except _DepthExceededError as exc:
+            depth_errors.append(exc)
+    if not values:
+        raise depth_errors[0]
+    return random.Random(seed).choice(values)
 
 
 def _generate_optional(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any:
@@ -222,12 +268,16 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
         return random.Random(seed).choice(members)
     if _is_buildable(tp):
         return _generate_object(tp, seed, path, ancestors, {})
-    if tp is list or origin is list:
-        return _generate_list(tp, seed, path, ancestors)
+    kind = origin or tp
+    if kind in _COLLECTION_HINTS:
+        return _generate_collection(kind, tp, seed, path, ancestors)
     if origin in (Union, types.UnionType):
-        inner = [arg for arg in get_args(tp) if arg is not type(None)]
-        if len(inner) == 1:
-            return _generate_optional(inner[0], seed, path, ancestors)
+        args = get_args(tp)
+        inner = [arg for arg in args if arg is not type(None)]
+        if len(inner) < len(args):
+            core = inner[0] if len(inner) == 1 else Union[tuple(inner)]  # noqa: UP007 - built at runtime
+            return _generate_optional(core, seed, path, ancestors)
+        return _generate_union(inner, seed, path, ancestors)
     raise GenerationError(
         f"cannot generate field '{path}' of type {_type_name(tp)}. "
         f"Pass it as an override: {_override_hint(path)}"
