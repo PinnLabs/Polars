@@ -1,4 +1,5 @@
 import dataclasses
+import inspect
 import random
 import string
 import sys
@@ -85,8 +86,44 @@ class _DepthExceededError(TypeError):
     pass
 
 
+@dataclasses.dataclass(frozen=True)
+class _FieldSpec:
+    name: str
+    type: Any
+    init: bool = True
+
+
 def _is_dataclass_type(tp: Any) -> bool:
     return isinstance(tp, type) and dataclasses.is_dataclass(tp)
+
+
+def _is_buildable(tp: Any) -> bool:
+    # A Python-defined __init__ marks a plain class; builtins like complex use slot wrappers.
+    return _is_dataclass_type(tp) or (
+        isinstance(tp, type) and inspect.isfunction(getattr(tp, "__init__", None))
+    )
+
+
+def _field_specs(cls: type[Any], path: str) -> list[_FieldSpec]:
+    if _is_dataclass_type(cls):
+        hints = get_type_hints(cls)
+        return [
+            _FieldSpec(field.name, hints[field.name], field.init)
+            for field in dataclasses.fields(cls)
+        ]
+    hints = get_type_hints(cls.__init__)
+    params = list(inspect.signature(cls.__init__).parameters.values())[1:]  # drop self
+    specs = []
+    for param in params:
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        if param.name not in hints:
+            raise TypeError(
+                f"cannot generate field '{path}.{param.name}': "
+                f"parameter '{param.name}' of {cls.__name__}.__init__ has no type hint"
+            )
+        specs.append(_FieldSpec(param.name, hints[param.name]))
+    return specs
 
 
 def _resolve_forward_ref(tp: str, owner: type) -> Any:
@@ -115,7 +152,7 @@ def _generate_optional(tp: Any, seed: str, path: str, ancestors: tuple[type, ...
     return None if random.Random(seed).random() < _NONE_PROBABILITY else value
 
 
-def _generate_dataclass(
+def _generate_object(
     cls: type[Any],
     seed: str,
     path: str,
@@ -128,12 +165,11 @@ def _generate_dataclass(
             f"cannot generate field '{path}' of type {cls.__name__}: "
             f"required self-reference exceeds max depth {_MAX_DEPTH}"
         )
-    hints = get_type_hints(cls)
     values: dict[str, Any] = dict(overrides)
-    for field in dataclasses.fields(cls):
+    for field in _field_specs(cls, path):
         if field.init and field.name not in overrides:
             values[field.name] = _generate(
-                hints[field.name], f"{seed}:{field.name}", f"{path}.{field.name}", ancestors
+                field.type, f"{seed}:{field.name}", f"{path}.{field.name}", ancestors
             )
     return cls(**values)
 
@@ -154,8 +190,8 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
                 f"cannot generate field '{path}' of type {tp.__name__}: enum has no members"
             )
         return random.Random(seed).choice(members)
-    if _is_dataclass_type(tp):
-        return _generate_dataclass(tp, seed, path, ancestors, {})
+    if _is_buildable(tp):
+        return _generate_object(tp, seed, path, ancestors, {})
     if tp is list or origin is list:
         return _generate_list(tp, seed, path, ancestors)
     if origin in (Union, types.UnionType):
@@ -166,10 +202,10 @@ def _generate(tp: Any, seed: str, path: str, ancestors: tuple[type, ...]) -> Any
 
 
 def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T:
-    if not _is_dataclass_type(cls):
-        raise TypeError(f"build() expects a dataclass, got {cls!r}")
+    if not _is_buildable(cls):
+        raise TypeError(f"build() expects a dataclass or a class with __init__, got {cls!r}")
 
-    fields = dataclasses.fields(cast(Any, cls))
+    fields = _field_specs(cls, cls.__name__)
     init_by_name = {field.name: field.init for field in fields}
     for name in overrides:
         if name not in init_by_name:
@@ -181,4 +217,4 @@ def build(cls: type[T], /, *, seed: int | None = None, **overrides: object) -> T
             raise TypeError(f"build() cannot set field '{cls.__name__}.{name}': it has init=False")
 
     base_seed = random.Random().getrandbits(64) if seed is None else seed
-    return cast(T, _generate_dataclass(cls, str(base_seed), cls.__name__, (), overrides))
+    return cast(T, _generate_object(cls, str(base_seed), cls.__name__, (), overrides))
