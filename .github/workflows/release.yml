@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Check the tag matches the package version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          expected="v$(uv version --short)"
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::Release tag $TAG does not match pyproject version $expected"
+            exit 1
+          fi
+      - run: uv build
+      - name: Smoke-test the wheel
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import polarfactory; print(polarfactory.__version__)"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/polarfactory
+    permissions:
+      id-token: write  # trusted publishing, no API token stored anywhere
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
