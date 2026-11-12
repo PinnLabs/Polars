@@ -1,0 +1,37 @@
+site_name: polarfactory
+site_description: Generate Python objects filled with realistic test data.
+site_url: https://pinnlabs.github.io/Polars/
+repo_url: https://github.com/PinnLabs/Polars
+repo_name: PinnLabs/Polars
+
+theme:
+  name: material
+  # shortcut: built-in icon until the real logo exists; swap for `logo: assets/logo.svg`.
+  icon:
+    logo: material/factory
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - User guide: guide.md
+  - Pydantic: pydantic.md
+  - Changelog: changelog.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.snippets
