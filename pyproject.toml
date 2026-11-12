@@ -1,12 +1,30 @@
 [project]
 name = "polarfactory"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Generate Python objects filled with realistic test data."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["testing", "test data", "factory", "fixtures", "dataclasses", "pydantic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/PinnLabs/Polars"
+Documentation = "https://pinnlabs.github.io/Polars/"
+Changelog = "https://github.com/PinnLabs/Polars/blob/main/CHANGELOG.md"
+Issues = "https://github.com/PinnLabs/Polars/issues"
 
 [project.optional-dependencies]
 pydantic = [
@@ -39,4 +57,7 @@ dev = [
     "mypy>=2.4.1",
     "pydantic>=2.11",
     "ruff>=0.17.3",
+]
+docs = [
+    "mkdocs-material>=9.7.7",
 ]
